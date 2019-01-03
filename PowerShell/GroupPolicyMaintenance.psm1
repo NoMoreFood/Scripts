@@ -11,6 +11,7 @@ Website: https://github.com/NoMoreFood/Scripts
 .HISTORY
 
 1.0.0.0 - Initial Public Release 
+1.0.1.0 - Various Console Output Enhancements
 
 .NOTES
 
@@ -229,16 +230,23 @@ Function Invoke-GPOCrossLinkedCheck
         "NOTICE: This scan uses the Global Catalog. Be mindful of replication delays after changes are made.`r`n"
      
     # get all links
-    $Links = Get-GPOLink -ServerName $ServerName -Credential $Credential
+    $Links = @(Get-GPOLink -ServerName $ServerName -Credential $Credential)
     
-    # screen out non-cross linked 
-    ForEach ($CrossLinked in ($Links | Where-Object { $_.LinkDomain -ne $_.PolicyDomain }))
+    # screen out non-cross linked
+    $CrossLinkedGPOs = $Links | Where-Object { $_.LinkDomain -ne $_.PolicyDomain }
+    ForEach ($CrossLinkedGPO in $CrossLinkedGPOs)
     {
-        Write-Host ('Group Policy: ' + $CrossLinked.Name)
-        Write-Host (' → Resides in Domain: ' + $CrossLinked.PolicyDomain)
-        Write-Host (' → But Is Referenced In: ' + $CrossLinked.LinkDomain)
-        Write-Host (' → Reference Location: ' + $CrossLinked.LinkPath)
+        Write-Host ('Group Policy: ' + $CrossLinkedGPO.Name)
+        Write-Host (' → Resides in Domain: ' + $CrossLinkedGPO.PolicyDomain)
+        Write-Host (' → But Is Linked In: ' + $CrossLinkedGPO.LinkDomain)
+        Write-Host (' → Link Location: ' + $CrossLinkedGPO.LinkPath)
         Write-Host ('')
+    }
+
+    # notify user if check found no issues
+    If ($CrossLinkedGPO.Count -eq 0)
+    {
+        Write-Host -ForegroundColor Green "No cross-linked objects detected."
     }
 }
 
@@ -309,27 +317,33 @@ Function Invoke-GPOBrokenLinkCheck
         "NOTICE: This scan uses the Global Catalog. Be mindful of replication delays after changes are made.`r`n"
      
     # get all links
-    $Links = Get-GPOLink -BrokenLinks -ServerName $ServerName -Credential $Credential
+    $Links = @(Get-GPOLink -BrokenLinks -ServerName $ServerName -Credential $Credential)
     
     # screen out non-cross linked 
     ForEach ($Link in $Links)
     {
         If ($Link.DeletedRecord)
         {
-            Write-Host -ForegroundColor Red ('Broken Reference To Group Policy: ' + $Link.Name)
+            Write-Host -ForegroundColor Red ('Broken Link To Group Policy: ' + $Link.Name)
             Write-Host -ForegroundColor Red (' → Resides in Domain: ' + $Link.PolicyDomain)
-            Write-Host -ForegroundColor Red (' → But Is Referenced In: ' + $Link.LinkDomain)
-            Write-Host -ForegroundColor Red (' → Reference Location: ' + $Link.LinkPath)
+            Write-Host -ForegroundColor Red (' → But Is Linked In: ' + $Link.LinkDomain)
+            Write-Host -ForegroundColor Red (' → Link Location: ' + $Link.LinkPath)
             Write-Host -ForegroundColor Red ('')
         }
         Else
         {
-            Write-Host -ForegroundColor Red ('Broken Reference (Or Inaccessible Group Policy): ' + $Link.Name)
+            Write-Host -ForegroundColor Red ('Broken Link (Or Inaccessible Group Policy): ' + $Link.Name)
             Write-Host -ForegroundColor Red (' → Linked In: ' + $Link.LinkDomain)
             Write-Host -ForegroundColor Red (' → Linked At: ' + $Link.LinkPath)
             Write-Host -ForegroundColor Red (' → Refers To Policy At: ' + $Link.PolicyPath)
             Write-Host -ForegroundColor Red ('')
         }
+    }
+
+    # notify user if check found no issues
+    If ($Links.Count -eq 0)
+    {
+        Write-Host -ForegroundColor Green "No broken links detected."
     }
 }
 
@@ -428,7 +442,7 @@ Function Get-GPOUnused
         '# Created By GroupPolicyMaintenance Module ' | Out-File -LiteralPath $CommandsFile -Force
         '' | Out-File -LiteralPath $CommandsFile -Force -Append
     }
-  
+
     # find a global catalog to use
     If ([string]::IsNullOrEmpty($ServerName))
     {
@@ -440,13 +454,17 @@ Function Get-GPOUnused
     {
         $ServerName += ':3268'
     }
-        
+      
     # get all links
     $Links = Get-GPOLink -ServerName $ServerName -Credential $Credential
-    
-    # fetch all policies
-	$PolicyObjects = Get-ADObject -LDAPFilter '(objectClass=groupPolicyContainer)' `
-		-Server $ServerName -Properties DisplayName,Name,Created,CanonicalName @OptionalCredentials
+
+    $PolicyObjects = Get-ADObject -LDAPFilter '(objectClass=groupPolicyContainer)' `
+    -Server $ServerName -Properties DisplayName,Name,Created,CanonicalName @OptionalCredentials
+
+    # fetch all policies sorted by domain and display name
+    $PolicyObjects = Get-ADObject -LDAPFilter '(objectClass=groupPolicyContainer)' `
+        -Server $ServerName -Properties DisplayName,Name,Created,CanonicalName @OptionalCredentials `
+        | Sort-Object {($_.CanonicalName -split '/')[0]},DisplayName
 
     # remove disabled links from the list of links if requested
     If ($IncludeDisabled) 
@@ -485,10 +503,12 @@ Function Get-GPOUnused
             $DisplayName = $UnusedPolicy['DisplayName']
             $Guid = $UnusedPolicy['Guid']
             $Domain = $UnusedPolicy['Domain']
+            $Created = $UnusedPolicy['Created']
 
-            $OutInfo = "# Policy: ${DisplayName}" + "`r`n"
-            $OutInfo += "Remove-GPO -Guid '${Guid}' -Domain '$Domain'" + "`r`n" + "`r`n"
-            $OutInfo | Out-File -LiteralPath $CommandsFile -Force -Append 
+            $OutInfo = "# Policy: ${DisplayName} " + "`r`n"
+            $OutInfo += "# Created On: ${Created} " + "`r`n"
+            $OutInfo += "Remove-GPO -Guid '${Guid}' -Domain '${Domain}'" + "`r`n"
+            $OutInfo | Out-File -LiteralPath $CommandsFile -Force -Append
         }
     }
 }
@@ -547,8 +567,8 @@ Function Invoke-GPOSysVolMismatchCheck
 
     # enumerate each domain in the current forest
     $Domains = (Get-ADForest @OptionalCredentials).Domains | Sort-Object { $_.Split('.').Count, $_ } 
-	For ($DomainIndex = 0; $DomainIndex -lt $Domains.Count; $DomainIndex++)
-	{
+    For ($DomainIndex = 0; $DomainIndex -lt $Domains.Count; $DomainIndex++)
+    {
         # skip this domain if not the explicit one requested
         $Domain = $Domains[$DomainIndex]
         If (-not [string]::IsNullOrEmpty($DomainName) -and $DomainName -ne $Domain) { Continue }
@@ -558,16 +578,16 @@ Function Invoke-GPOSysVolMismatchCheck
         Write-Progress -Activity 'Scanning' -PercentComplete (100.0 * $DomainIndex / $Domains.Count) `
             -Status "Scanning Domain: $Domain"
         
-		# fetch all policies in the domain
-		$DomainController = (Get-ADDomainController -Domain $Domain -Discover).HostName[0]
-		$AdObjects = Get-ADObject -LDAPFilter '(objectClass=groupPolicyContainer)' `
-			-Server $DomainController -Properties DisplayName,gPCFileSysPath @OptionalCredentials
+        # fetch all policies in the domain
+        $DomainController = (Get-ADDomainController -Domain $Domain -Discover).HostName[0]
+        $AdObjects = Get-ADObject -LDAPFilter '(objectClass=groupPolicyContainer)' `
+            -Server $DomainController -Properties DisplayName,gPCFileSysPath @OptionalCredentials
         $AdDirectories = [ordered]@{}
         $AdObjects | Sort-Object Name | ForEach-Object { $AdDirectories[$_.gPCFileSysPath] = $_ } 
 
         # lookup all policies in sysvol for the domain
         $Drive = New-PSDrive -Name 'GPM' -PSProvider FileSystem -Root "\\$Domain\SysVol\$Domain\Policies" -Scope Local @OptionalCredentials
-		$SysVolDirectories = Get-ChildItem -Directory -Force -LiteralPath "GPM:" `
+        $SysVolDirectories = Get-ChildItem -Directory -Force -LiteralPath "GPM:" `
             | Where-Object -Property Name -Like '{*-*-*-*}' `
             | Sort-Object Name `
             | Select-Object -ExpandProperty FullName
@@ -583,18 +603,18 @@ Function Invoke-GPOSysVolMismatchCheck
 
         # report on differences
         ForEach ($Difference in $Differences)
-		{
+        {
             If ($Difference.SideIndicator -eq '<=')
             {
                 Write-Host -ForegroundColor Yellow ('Directory Missing From SysVol: ' + $Difference.InputObject)
                 Write-Host -ForegroundColor Yellow (' → Referenced in: ' + $AdDirectories[$Difference.InputObject].DisplayName)
-			}
+            }
             Else
             {
                 Write-Host -ForegroundColor Yellow ('Unused Directory In SysVol: ' + $Difference.InputObject)
             }
-		}
-	}
+        }
+    }
 }
 
 <#
@@ -708,7 +728,8 @@ Function Invoke-GPOReplicationConsistencyCheck
         $SharePath = Join-Path "\\${ServerName}" ($LocalPath -replace ':','$')        
         $Drive = New-PSDrive -Name 'GPM' -PSProvider FileSystem -Root $SharePath -Scope Local @OptionalCredentials
         $Items = Get-ChildItem -LiteralPath 'GPM:' -Recurse -Force -File | `
-            Where-Object -Property FullName -NotContains 'NtFrs_' | Select-Object `
+            Where-Object -Property FullName -NotLike '*\NtFrs_*\*' | `
+            Where-Object -Property FullName -NotLike '*\DfsrPrivate\*' | Select-Object `
             @{Name='Hash';Expression={Get-FileHash -LiteralPath $_.FullName | Select-Object -ExpandProperty Hash}},
             @{Name='Path';Expression={$_.FullName.Replace("${SharePath}\",'').ToLower()}}
         $Drive | Remove-PSDrive
