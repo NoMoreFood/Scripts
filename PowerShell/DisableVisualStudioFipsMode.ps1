@@ -40,7 +40,7 @@ Set-StrictMode -Version 2.0
 # run vswhere to determine valid locations of visual studio
 $VsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $VsWhereOutput = [System.IO.Path]::GetTempFileName()
-$VsWhereInfo = Start-Process $VsWhere -NoNewWindow -Wait -ArgumentList @('-property','installationPath') -PassThru -RedirectStandardOutput $VsWhereOutput
+$VsWhereInfo = Start-Process $VsWhere -NoNewWindow -Wait -ArgumentList @('-all','-property','installationPath') -PassThru -RedirectStandardOutput $VsWhereOutput
 If ($VsWhereInfo.ExitCode -ne 0) 
 {
     Write-Host -ForegroundColor Red ('Unable To Execute VsWhere To Determine Location.')
