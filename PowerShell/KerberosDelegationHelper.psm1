@@ -8,6 +8,7 @@ delegation.
 .HISTORY
 
 1.0.0.0 - Initial Public Release 
+1.0.0.1 - Fixed Clear-ADAllowedToActAccount For Computer Objects 
 
 .NOTES
 
@@ -249,7 +250,7 @@ Function Clear-ADAllowedToActAccount
     Process
     {
         $BackEndAccount = Resolve-ADAccount $BackEndAccount
-        $BackEndAccount | Set-ADUser -Clear @('msDS-AllowedToActOnBehalfOfOtherIdentity')
+        $BackEndAccount | Set-ADObject -Clear @('msDS-AllowedToActOnBehalfOfOtherIdentity')
     }
 }
 
