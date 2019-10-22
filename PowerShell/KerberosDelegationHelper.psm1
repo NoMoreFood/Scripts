@@ -8,7 +8,8 @@ delegation.
 .HISTORY
 
 1.0.0.0 - Initial Public Release 
-1.0.0.1 - Fixed Clear-ADAllowedToActAccount For Computer Objects 
+1.0.0.1 - Fixed Clear-ADAllowedToActAccount For Computer Objects
+1.1.0.0 - Handle case where FrontEndAccount is not in Active Directory
 
 .NOTES
 
@@ -18,6 +19,8 @@ Author: Bryan Berns (Bryan.Berns@gmail.com).
 
 #Requires -Version 3
 Set-StrictMode -Version 2.0
+$Script:ErrorActionPreference = [System.Management.Automation.ActionPreference]::Stop
+
 Import-Module ActiveDirectory
 
 <#
@@ -92,8 +95,8 @@ Get-ADUser 'webserver' | Set-ADAllowedToActAccount -BackEndAccount 'DOMAIN\sqlac
 Function Set-ADAllowedToActAccount
 {
     [CmdletBinding()]
-	[Alias('Add-ADAllowedToActAccount')]
-	[Alias('Remove-ADAllowedToActAccount')]
+    [Alias('Add-ADAllowedToActAccount')]
+    [Alias('Remove-ADAllowedToActAccount')]
     Param
     (
         [parameter(ValueFromPipeline,Mandatory)][object] $FrontEndAccount,
@@ -103,18 +106,18 @@ Function Set-ADAllowedToActAccount
 
     Process
     {
-		# automatically set remove if called using remove alias
-		If ($MyInvocation.InvocationName -eq 'Remove-ADAllowedToActAccount') 
-		{
-			$RemoveAccount = $true
-		}
-		If ($MyInvocation.InvocationName -eq 'Add-ADAllowedToActAccount' -and $RemoveAccount) 
-		{
-			Throw 'Cannot specify Add-ADAllowedToActAccount with -RemoveAccount'
-		}
+        # automatically set remove if called using remove alias
+        If ($MyInvocation.InvocationName -eq 'Remove-ADAllowedToActAccount') 
+        {
+            $RemoveAccount = $true
+        }
+        If ($MyInvocation.InvocationName -eq 'Add-ADAllowedToActAccount' -and $RemoveAccount) 
+        {
+            Throw 'Cannot specify Add-ADAllowedToActAccount with -RemoveAccount'
+        }
 
         # resolve the frontend account to a security identifier
-        $FrontEndAccountSid = (Resolve-ADAccount -Account $FrontEndAccount -Properties @('objectSID')).objectSID
+        $FrontEndAccountSid = Resolve-ADAccount -Account $FrontEndAccount -ReturnSid
 
         # resolve the backend account to an object that can be used with AD cmdlets
         $BackEndAccount = Resolve-ADAccount -Account $BackEndAccount -Properties 'msDS-AllowedToActOnBehalfOfOtherIdentity'
@@ -157,8 +160,8 @@ Function Set-ADAllowedToActAccount
                 $BackEndAccountList.SetOwner($Owner)  
             }
 
-			# ensure the object is not already in the list
-			$AccessEntryCount = $BackEndAccountList.Access.Count
+            # ensure the object is not already in the list
+            $AccessEntryCount = $BackEndAccountList.Access.Count
             $BackEndAccountList.RemoveAccess($FrontEndAccountSid, ([System.Security.AccessControl.AccessControlType]::Allow))
             If ($AccessEntryCount -ne $BackEndAccountList.Access.Count)
             {
@@ -261,13 +264,15 @@ Function Script:Resolve-ADAccount
     Param
     (
         [parameter(ValueFromPipeline,Mandatory=$true)] $Account,
-        [string[]] $Properties = @('DistinguishedName')
+        [string[]] $Properties = @('DistinguishedName'),
+        [switch] $ReturnSid
     )
 
     # check if already resolved
     If ($Account -is [Microsoft.ActiveDirectory.Management.ADObject])
     {
         # ensure we have a version of the object with the necessary properties
+        If ($ReturnSid) { Return ($Account | Get-ADObject -Properties 'objectSid').objectSid }
         Return $Account | Get-ADObject -Properties $Properties
     }
 
@@ -285,7 +290,7 @@ Function Script:Resolve-ADAccount
         # global catalog based objects cannot be written to so re-resolve
         $AccountSid = $Objects[-1].objectSID
     } `
-    ElseIf ($Account -match '^S-1-5-21-.*')
+    ElseIf ($Account -match '^S-1-5-.*')
     {
         $AccountSid = New-Object System.Security.Principal.SecurityIdentifier $Account
     } `
@@ -302,6 +307,9 @@ Function Script:Resolve-ADAccount
             Throw "Could not resolve account: $Account; Verify the account exists or try another format."
         }
     }
+
+    # if only object sid is requested, return that
+    If ($ReturnSid) { Return $AccountSid }
 
     # resolve the sid to a distinguished name and lookup the bound domain controller
     $AccountAdsi = [ADSI] ('LDAP://<SID=' + $AccountSid.Value + '>')
