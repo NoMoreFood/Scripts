@@ -566,7 +566,7 @@ Function Invoke-GPOSysVolMismatchCheck
     }
 
     # enumerate each domain in the current forest
-    $Domains = (Get-ADForest @OptionalCredentials).Domains | Sort-Object { $_.Split('.').Count, $_ } 
+    $Domains = @(@((Get-ADForest @OptionalCredentials).Domains) | Sort-Object { $_.Split('.').Count, $_ })
     For ($DomainIndex = 0; $DomainIndex -lt $Domains.Count; $DomainIndex++)
     {
         # skip this domain if not the explicit one requested
